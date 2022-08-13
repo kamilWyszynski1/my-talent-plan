@@ -1,6 +1,7 @@
-use clap::{Parser, Subcommand};
-
 use crate::KvStore;
+use crate::Result;
+use anyhow::Context;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -10,7 +11,7 @@ pub struct Cli {
 }
 
 impl Cli {
-    pub fn run(self, kv: &mut KvStore) {
+    pub fn run(self, kv: &mut KvStore) -> Result<()> {
         self.command.run(kv)
     }
 }
@@ -23,11 +24,19 @@ pub enum Commands {
 }
 
 impl Commands {
-    pub fn run(self, kv: &mut KvStore) {
+    pub fn run(self, kv: &mut KvStore) -> Result<()> {
         match self {
-            Commands::Set { key, value } => unimplemented!(),
-            Commands::Get { key } => unimplemented!(),
-            Commands::Rm { key } => unimplemented!(),
+            Commands::Set { key, value } => kv.set(key, value),
+            Commands::Get { key } => {
+                match kv.get(key)? {
+                    Some(v) => println!("{v}"),
+                    None => println!("Key not found"),
+                }
+                // let v = kv.get(key)?.context("value not found")?;
+                // println!("{v}");
+                Ok(())
+            }
+            Commands::Rm { key } => kv.remove(key),
         }
     }
 }
