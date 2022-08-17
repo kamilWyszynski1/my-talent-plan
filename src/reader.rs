@@ -2,7 +2,7 @@ use crate::Result;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 
 pub struct BufReaderWithPos<R: Read + Seek> {
-    reader: BufReader<R>,
+    pub reader: BufReader<R>,
     pos: u64,
 }
 
@@ -40,7 +40,7 @@ pub struct BufWriterWithPos<W: Write + Seek> {
 
 impl<W: Write + Seek> BufWriterWithPos<W> {
     pub fn new(mut w: W) -> Result<Self> {
-        let pos = w.seek(SeekFrom::Current(0))?;
+        let pos = w.seek(SeekFrom::End(0))?;
 
         Ok(Self {
             writer: BufWriter::new(w),

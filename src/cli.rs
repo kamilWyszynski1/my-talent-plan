@@ -1,6 +1,5 @@
 use crate::KvStore;
 use crate::Result;
-use anyhow::Context;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
