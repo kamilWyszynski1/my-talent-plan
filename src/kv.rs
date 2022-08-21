@@ -5,11 +5,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Compaction process will be started after reaching this many entries.
-const CAPACITY: u64 = 1000;
+const CAPACITY: u64 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 enum Command {
@@ -37,10 +37,10 @@ pub struct KvStore {
     index: BTreeMap<String, CommandPos>,
 
     /// Current generation.
-    generation: u64,
+    current_gen: u64,
 
     /// Tracks amount of already written data to latest generation file.
-    last_generation_size: u64,
+    uncompacted: u64,
 }
 
 impl KvStore {
@@ -90,8 +90,8 @@ impl KvStore {
                     .open(path.join(format!("{}.log", generation)))?,
             )?,
             index: BTreeMap::default(),
-            generation,
-            last_generation_size: 0, // will be set in read_generation_data method.
+            current_gen: generation,
+            uncompacted: 0, // will be set in read_generation_data method.
         };
 
         // read all data from all readers.
@@ -99,7 +99,7 @@ impl KvStore {
 
         debug!(
             "current generation: {}, last_generation_size: {}",
-            s.generation, s.last_generation_size
+            s.current_gen, s.uncompacted
         );
 
         Ok(s)
@@ -111,7 +111,7 @@ impl KvStore {
         let mut size = 0;
 
         for (gen, _) in &self.readers {
-            let mut reader = BufReader::new(File::open(self.path.join(format!("{}.log", gen)))?);
+            let mut reader = BufReader::new(File::open(self.gen_path(*gen))?);
             let mut pos = reader.seek(SeekFrom::Start(0))?;
             let mut stream = Deserializer::from_reader(reader).into_iter::<Command>();
 
@@ -122,7 +122,7 @@ impl KvStore {
 
                 match cmd? {
                     Command::Set { key, .. } => {
-                        if *gen == self.generation {
+                        if *gen == self.current_gen {
                             size += 1
                         }
                         self.index.insert(
@@ -141,17 +141,17 @@ impl KvStore {
                 pos = new_pos;
             }
         }
-        self.last_generation_size = size;
+        self.uncompacted = size;
         Ok(())
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        if self.last_generation_size >= CAPACITY {
-            self.new_generation()?;
+        if self.uncompacted >= CAPACITY {
+            self.compact()?;
         }
 
         let pos = self.writer.pos;
-        writeln!(
+        write!(
             self.writer,
             "{}",
             serde_json::to_string(&Command::Set {
@@ -164,36 +164,13 @@ impl KvStore {
         self.index.insert(
             key,
             CommandPos {
-                gen: self.generation,
+                gen: self.current_gen,
                 pos,
                 len: self.writer.pos - pos,
             },
         );
 
-        self.last_generation_size += 1;
-        Ok(())
-    }
-
-    /// Creates new file, new writer and reader for that file and updates `last_generation_size` and `generation` fields.
-    pub fn new_generation(&mut self) -> Result<()> {
-        debug!("new_generation - current generation: {}", self.generation);
-
-        self.generation += 1;
-        self.last_generation_size = 0;
-
-        let new_file_path = self.path.join(format!("{}.log", self.generation));
-        self.writer = BufWriterWithPos::new(
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .append(true)
-                .open(&new_file_path)?,
-        )?;
-        self.readers.insert(
-            self.generation,
-            BufReaderWithPos::new(File::open(&new_file_path)?, 0)?,
-        );
-
+        self.uncompacted += 1;
         Ok(())
     }
 
@@ -225,6 +202,134 @@ impl KvStore {
         serde_json::to_writer(&mut self.writer, &Command::Rm { key })?;
         self.writer.flush()?;
         Ok(())
+    }
+
+    fn gen_path(&self, gen: u64) -> PathBuf {
+        self.path.join(format!("{}.log", gen))
+    }
+
+    /// Takes values from latest generation and writes compacted version of it to another file.
+    fn compact(&mut self) -> Result<()> {
+        // let latest_entries: Vec<String> = self
+        //     .index
+        //     .iter()
+        //     .filter(|(_, v)| v.gen == self.generation)
+        //     .map(|(k, _)| k.clone())
+        //     .collect();
+
+        // let compacted_gen = self.generation + 1;
+        // let mut compacted_writer = BufWriterWithPos::new(
+        //     OpenOptions::new()
+        //         .create(true)
+        //         .write(true)
+        //         .append(true)
+        //         .open(self.gen_path(compacted_gen))?,
+        // )?;
+
+        // for key in latest_entries {
+        //     let value = self.get(key.clone())?.context("compact: value not found")?;
+
+        //     let pos = compacted_writer.pos;
+        //     // write old key to new, compacted file.
+        //     write!(
+        //         compacted_writer,
+        //         "{}",
+        //         serde_json::to_string(&Command::Set {
+        //             key: key.clone(),
+        //             value
+        //         })?
+        //     )?;
+
+        //     // rewrite index to give key:value pair.
+        //     self.index.insert(
+        //         key,
+        //         CommandPos {
+        //             gen: compacted_gen,
+        //             pos,
+        //             len: compacted_writer.pos - pos,
+        //         },
+        //     );
+        // }
+        // compacted_writer.flush()?;
+
+        // // delete old, uncompacted file.
+        // fs::remove_file(self.gen_path(self.generation))?;
+
+        // // increased by 2 because +1 was a compacted file.
+        // self.generation += 2;
+        // self.writer = BufWriterWithPos::new(
+        //     OpenOptions::new()
+        //         .create(true)
+        //         .write(true)
+        //         .append(true)
+        //         .open(self.gen_path(self.generation))?,
+        // )?;
+        // self.uncompacted = 0;
+        // self.readers.remove(&compacted_gen);
+        // self.readers.insert(
+        //     self.generation,
+        //     BufReaderWithPos::new(File::open(self.gen_path(self.generation))?, 0)?,
+        // );
+
+        // Ok(())
+
+        // increase current gen by 2. current_gen + 1 is for the compaction file.
+        let compaction_gen = self.current_gen + 1;
+        self.current_gen += 2;
+        self.writer = self.new_log_file(self.current_gen)?;
+
+        let mut compaction_writer = self.new_log_file(compaction_gen)?;
+
+        let mut new_pos = 0; // pos in the new log file.
+        for cmd_pos in &mut self.index.values_mut() {
+            let reader = self
+                .readers
+                .get_mut(&cmd_pos.gen)
+                .expect("Cannot find log reader");
+            if reader.pos != cmd_pos.pos {
+                reader.seek(SeekFrom::Start(cmd_pos.pos))?;
+            }
+
+            let mut entry_reader = reader.take(cmd_pos.len);
+            let len = io::copy(&mut entry_reader, &mut compaction_writer)?;
+            // *cmd_pos = (compaction_gen, new_pos..new_pos + len).into();
+            *cmd_pos = CommandPos {
+                gen: compaction_gen,
+                pos: new_pos,
+                len,
+            };
+            new_pos += len;
+        }
+        compaction_writer.flush()?;
+
+        // remove stale log files.
+        let stale_gens: Vec<_> = self
+            .readers
+            .keys()
+            .filter(|&&gen| gen < compaction_gen)
+            .cloned()
+            .collect();
+        for stale_gen in stale_gens {
+            self.readers.remove(&stale_gen);
+            fs::remove_file(self.gen_path(stale_gen))?;
+        }
+        self.uncompacted = 0;
+
+        Ok(())
+    }
+
+    fn new_log_file(&mut self, gen: u64) -> Result<BufWriterWithPos<File>> {
+        let path = self.gen_path(gen);
+        let writer = BufWriterWithPos::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(true)
+                .open(&path)?,
+        )?;
+        self.readers
+            .insert(gen, BufReaderWithPos::new(File::open(path)?, 0)?);
+        Ok(writer)
     }
 }
 

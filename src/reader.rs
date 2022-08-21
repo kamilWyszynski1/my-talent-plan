@@ -3,7 +3,7 @@ use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 
 pub struct BufReaderWithPos<R: Read + Seek> {
     pub reader: BufReader<R>,
-    pos: u64,
+    pub pos: u64,
 }
 
 impl<R: Read + Seek> BufReaderWithPos<R> {
