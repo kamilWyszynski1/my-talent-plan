@@ -1,1 +1,0 @@
-Compaction - after reaching capacity we should create another, compacted file without redundant files.
