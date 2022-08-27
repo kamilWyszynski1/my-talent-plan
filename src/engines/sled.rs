@@ -10,9 +10,9 @@ pub struct SledKvsEngine {
 }
 
 impl SledKvsEngine {
-    pub fn new() -> Result<Self> {
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         Ok(Self {
-            db: sled::open("sled")?,
+            db: sled::open(path)?,
         })
     }
 }

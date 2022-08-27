@@ -2,6 +2,7 @@ use crate::error::{KvsError, Result};
 use crate::reader::{BufReaderWithPos, BufWriterWithPos};
 use crate::KvsEngine;
 use anyhow::{bail, Context};
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
 use std::collections::BTreeMap;
@@ -111,7 +112,7 @@ impl KvStore {
         // size of latest generation.
         let mut size = 0;
 
-        for gen in self.readers.keys() {
+        for gen in self.readers.keys().sorted() {
             let mut reader = BufReader::new(File::open(self.gen_path(*gen))?);
             let mut pos = reader.seek(SeekFrom::Start(0))?;
             let mut stream = Deserializer::from_reader(reader).into_iter::<Command>();

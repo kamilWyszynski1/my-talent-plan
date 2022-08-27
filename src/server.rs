@@ -85,7 +85,7 @@ impl ServerCLI {
 
     /// Starts server with SledKvsEngine as an engine.
     fn run_sled(&self) -> Result<()> {
-        let engine = SledKvsEngine::new()?;
+        let engine = SledKvsEngine::new("sled")?;
         let mut server = Server::new(self.addr, self.engine, engine);
         server.run()?;
         Ok(())

@@ -14,11 +14,16 @@ serde_json = "1.0.83"
 env_logger = "0.9.0"
 log = "0.4.0"
 sled = "0.34.7"
+itertools = "0.10.3"
 
 [dev-dependencies]
 assert_cmd = "0.11"
-criterion = "0.3"
+criterion = { version = "0.3", features = ["html_reports"]}
 predicates = "1.0.0"
 rand = "0.6.5"
 tempfile = "3.0.7"
 walkdir = "2.2.7"
+
+[[bench]]
+name = "kvs"
+harness = false
