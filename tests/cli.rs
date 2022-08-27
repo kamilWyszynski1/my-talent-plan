@@ -295,6 +295,8 @@ fn cli_access_server(engine: &str, addr: &str) {
     sender.send(()).unwrap();
     handle.join().unwrap();
 
+    thread::sleep(Duration::from_secs(2));
+
     // Reopen and check value
     let (sender, receiver) = mpsc::sync_channel(0);
     let mut server = Command::cargo_bin("kvs-server").unwrap();
@@ -307,6 +309,7 @@ fn cli_access_server(engine: &str, addr: &str) {
         let _ = receiver.recv(); // wait for main thread to finish
         child.kill().expect("server exited before killed");
     });
+
     thread::sleep(Duration::from_secs(1));
 
     Command::cargo_bin("kvs-client")

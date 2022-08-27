@@ -1,5 +1,6 @@
 use crate::error::{KvsError, Result};
 use crate::reader::{BufReaderWithPos, BufWriterWithPos};
+use crate::KvsEngine;
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
@@ -9,7 +10,7 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Compaction process will be started after reaching this many entries.
-const CAPACITY: u64 = 2;
+const CAPACITY: u64 = 1000;
 
 #[derive(Debug, Serialize, Deserialize)]
 enum Command {
@@ -145,134 +146,12 @@ impl KvStore {
         Ok(())
     }
 
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        if self.uncompacted >= CAPACITY {
-            self.compact()?;
-        }
-
-        let pos = self.writer.pos;
-        write!(
-            self.writer,
-            "{}",
-            serde_json::to_string(&Command::Set {
-                key: key.clone(),
-                value
-            })?
-        )?;
-        self.writer.flush()?;
-
-        self.index.insert(
-            key,
-            CommandPos {
-                gen: self.current_gen,
-                pos,
-                len: self.writer.pos - pos,
-            },
-        );
-
-        self.uncompacted += 1;
-        Ok(())
-    }
-
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        match self.index.get(&key) {
-            Some(cmd_pos) => {
-                let reader = self
-                    .readers
-                    .get_mut(&cmd_pos.gen)
-                    .context("could not find a reader")?;
-
-                reader.seek(SeekFrom::Start(cmd_pos.pos))?;
-                if let Command::Set { value, .. } =
-                    serde_json::from_reader(reader.take(cmd_pos.len))?
-                {
-                    return Ok(Some(value));
-                }
-                bail!("Key not found")
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        if self.index.remove(&key).is_none() {
-            return Err(KvsError::KeyNotFound.into());
-        }
-
-        serde_json::to_writer(&mut self.writer, &Command::Rm { key })?;
-        self.writer.flush()?;
-        Ok(())
-    }
-
     fn gen_path(&self, gen: u64) -> PathBuf {
         self.path.join(format!("{}.log", gen))
     }
 
     /// Takes values from latest generation and writes compacted version of it to another file.
     fn compact(&mut self) -> Result<()> {
-        // let latest_entries: Vec<String> = self
-        //     .index
-        //     .iter()
-        //     .filter(|(_, v)| v.gen == self.generation)
-        //     .map(|(k, _)| k.clone())
-        //     .collect();
-
-        // let compacted_gen = self.generation + 1;
-        // let mut compacted_writer = BufWriterWithPos::new(
-        //     OpenOptions::new()
-        //         .create(true)
-        //         .write(true)
-        //         .append(true)
-        //         .open(self.gen_path(compacted_gen))?,
-        // )?;
-
-        // for key in latest_entries {
-        //     let value = self.get(key.clone())?.context("compact: value not found")?;
-
-        //     let pos = compacted_writer.pos;
-        //     // write old key to new, compacted file.
-        //     write!(
-        //         compacted_writer,
-        //         "{}",
-        //         serde_json::to_string(&Command::Set {
-        //             key: key.clone(),
-        //             value
-        //         })?
-        //     )?;
-
-        //     // rewrite index to give key:value pair.
-        //     self.index.insert(
-        //         key,
-        //         CommandPos {
-        //             gen: compacted_gen,
-        //             pos,
-        //             len: compacted_writer.pos - pos,
-        //         },
-        //     );
-        // }
-        // compacted_writer.flush()?;
-
-        // // delete old, uncompacted file.
-        // fs::remove_file(self.gen_path(self.generation))?;
-
-        // // increased by 2 because +1 was a compacted file.
-        // self.generation += 2;
-        // self.writer = BufWriterWithPos::new(
-        //     OpenOptions::new()
-        //         .create(true)
-        //         .write(true)
-        //         .append(true)
-        //         .open(self.gen_path(self.generation))?,
-        // )?;
-        // self.uncompacted = 0;
-        // self.readers.remove(&compacted_gen);
-        // self.readers.insert(
-        //     self.generation,
-        //     BufReaderWithPos::new(File::open(self.gen_path(self.generation))?, 0)?,
-        // );
-
-        // Ok(())
-
         // increase current gen by 2. current_gen + 1 is for the compaction file.
         let compaction_gen = self.current_gen + 1;
         self.current_gen += 2;
@@ -330,6 +209,67 @@ impl KvStore {
         self.readers
             .insert(gen, BufReaderWithPos::new(File::open(path)?, 0)?);
         Ok(writer)
+    }
+}
+
+impl KvsEngine for KvStore {
+    fn set(&mut self, key: String, value: String) -> Result<()> {
+        if self.uncompacted >= CAPACITY {
+            self.compact()?;
+        }
+
+        let pos = self.writer.pos;
+        write!(
+            self.writer,
+            "{}",
+            serde_json::to_string(&Command::Set {
+                key: key.clone(),
+                value
+            })?
+        )?;
+        self.writer.flush()?;
+
+        self.index.insert(
+            key,
+            CommandPos {
+                gen: self.current_gen,
+                pos,
+                len: self.writer.pos - pos,
+            },
+        );
+
+        self.uncompacted += 1;
+        Ok(())
+    }
+
+    fn get(&mut self, key: String) -> Result<Option<String>> {
+        match self.index.get(&key) {
+            Some(cmd_pos) => {
+                let reader = self
+                    .readers
+                    .get_mut(&cmd_pos.gen)
+                    .context("could not find a reader")?;
+
+                reader.seek(SeekFrom::Start(cmd_pos.pos))?;
+                if let Command::Set { value, .. } =
+                    serde_json::from_reader(reader.take(cmd_pos.len))?
+                {
+                    return Ok(Some(value));
+                }
+                bail!("Key not found")
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn remove(&mut self, key: String) -> Result<()> {
+        if self.index.remove(&key).is_none() {
+            return Err(KvsError::KeyNotFound.into());
+        }
+
+        serde_json::to_writer(&mut self.writer, &Command::Rm { key })?;
+        self.writer.flush()?;
+        Ok(())
     }
 }
 

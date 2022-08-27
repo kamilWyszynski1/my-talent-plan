@@ -1,0 +1,1 @@
+My attempt on [talent-plan course](https://github.com/pingcap/talent-plan/tree/master/courses/rust) for rust.

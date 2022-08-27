@@ -1,9 +1,13 @@
-use crate::{cmd::CMD, Result};
+use crate::{
+    cmd::{GetResponse, RemoveResponse, SetResponse, CMD},
+    Result,
+};
+use anyhow::bail;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Deserializer};
 use std::{
-    io::Write,
+    io::{BufReader, BufWriter, Read, Write},
     net::{Ipv4Addr, SocketAddrV4, TcpStream},
 };
 
@@ -113,9 +117,39 @@ impl Client {
     }
 
     fn write(&self, cmd: &CMD) -> Result<()> {
-        let mut stream = TcpStream::connect(self.ip)?;
+        let stream = TcpStream::connect(self.ip)?;
+        // let tcp_writer = tcp_reader.try_clone()?;
 
-        stream.write_all(&serde_json::to_vec(cmd)?)?;
+        let mut reader = Deserializer::from_reader(BufReader::new(stream.try_clone()?));
+        let mut writer = BufWriter::new(stream);
+
+        debug!("writing cmd");
+
+        serde_json::to_writer(&mut writer, cmd)?;
+        writer.flush()?;
+        drop(writer);
+
+        debug!("cmd written");
+
+        match cmd {
+            CMD::Set { key: _, value: _ } => {
+                debug!("reading set response");
+                let resp = SetResponse::deserialize(&mut reader)?;
+                debug!("{:?}", resp);
+            }
+            CMD::Get { key: _ } => {
+                debug!("reading get response");
+                let resp = GetResponse::deserialize(&mut reader)?;
+                println!("{}", resp);
+            }
+            CMD::Rm { key: _ } => {
+                debug!("reading remove response");
+                let resp = RemoveResponse::deserialize(&mut reader)?;
+                if let RemoveResponse::Err(e) = resp {
+                    bail!(e)
+                };
+            }
+        }
 
         Ok(())
     }
