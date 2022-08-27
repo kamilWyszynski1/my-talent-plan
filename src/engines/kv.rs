@@ -111,7 +111,7 @@ impl KvStore {
         // size of latest generation.
         let mut size = 0;
 
-        for (gen, _) in &self.readers {
+        for gen in self.readers.keys() {
             let mut reader = BufReader::new(File::open(self.gen_path(*gen))?);
             let mut pos = reader.seek(SeekFrom::Start(0))?;
             let mut stream = Deserializer::from_reader(reader).into_iter::<Command>();

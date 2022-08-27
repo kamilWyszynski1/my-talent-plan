@@ -5,9 +5,9 @@ use crate::{
 use anyhow::bail;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Deserializer};
+use serde_json::{ Deserializer};
 use std::{
-    io::{BufReader, BufWriter, Read, Write},
+    io::{BufReader, BufWriter, Write},
     net::{Ipv4Addr, SocketAddrV4, TcpStream},
 };
 

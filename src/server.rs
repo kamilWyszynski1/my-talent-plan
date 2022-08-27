@@ -6,7 +6,6 @@ use anyhow::bail;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::Deserializer;
-use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
