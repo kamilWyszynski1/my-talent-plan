@@ -49,14 +49,14 @@ pub struct ServerCLI {
     #[clap(
         action,
         long,
-        default_value_t = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000), 
+        default_value_t = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000),
         value_parser,
         value_name = "IP-PORT",
     )]
     addr: SocketAddrV4,
     #[clap(
         short,
-        long, 
+        long,
         default_value_t = EngineType::Kvs,
         value_name = "ENGINE-NAME",
     )]

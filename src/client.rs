@@ -41,7 +41,7 @@ pub enum Commands {
         #[clap(
             action,
             long,
-            default_value_t = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000), 
+            default_value_t = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000),
             value_parser,
             value_name = "IP-PORT",
         )]
@@ -52,7 +52,7 @@ pub enum Commands {
         #[clap(
             action,
             long,
-            default_value_t = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000), 
+            default_value_t = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000),
             value_parser,
             value_name = "IP-PORT",
         )]
@@ -63,7 +63,7 @@ pub enum Commands {
         #[clap(
             action,
             long,
-            default_value_t = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000), 
+            default_value_t = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000),
             value_parser,
             value_name = "IP-PORT",
         )]
