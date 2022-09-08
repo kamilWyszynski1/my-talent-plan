@@ -1,10 +1,5 @@
-use std::{
-    sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
-    },
-    thread::{self, spawn, JoinHandle},
-};
+use crossbeam::channel::{self, Receiver, Sender};
+use std::thread::{self, spawn};
 
 use super::ThreadPool;
 
@@ -37,8 +32,7 @@ impl ThreadPool for SharedQueueThreadPool {
     where
         Self: Sized,
     {
-        let (sender, receiver) = channel();
-        let receiver = Arc::new(Mutex::new(receiver));
+        let (sender, receiver) = channel::unbounded();
 
         for _ in 0..threads {
             let receiver = receiver.clone();
@@ -59,7 +53,7 @@ impl ThreadPool for SharedQueueThreadPool {
 }
 
 #[derive(Clone)]
-pub struct TaskReceiver(Arc<Mutex<Receiver<ThreadPoolMessage>>>);
+pub struct TaskReceiver(Receiver<ThreadPoolMessage>);
 
 /// Custom implementation of Drop to catch panicking jobs.
 impl Drop for TaskReceiver {
@@ -74,7 +68,7 @@ impl Drop for TaskReceiver {
 
 fn handle(receiver: TaskReceiver) {
     loop {
-        match receiver.0.lock().unwrap().recv() {
+        match receiver.0.recv() {
             Ok(msg) => match msg {
                 ThreadPoolMessage::RunJob(job) => job(),
                 ThreadPoolMessage::Shutdown => {

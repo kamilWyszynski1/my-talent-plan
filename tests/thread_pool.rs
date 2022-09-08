@@ -58,13 +58,13 @@ fn shared_queue_thread_pool_spawn_counter() -> Result<()> {
     spawn_counter(pool)
 }
 
-// #[test]
-// fn rayon_thread_pool_spawn_counter() -> Result<()> {
-//     let pool = RayonThreadPool::new(4)?;
-//     spawn_counter(pool)
-// }
+#[test]
+fn rayon_thread_pool_spawn_counter() -> Result<()> {
+    let pool = RayonThreadPool::new(4)?;
+    spawn_counter(pool)
+}
 
-// #[test]
-// fn shared_queue_thread_pool_panic_task() -> Result<()> {
-//     spawn_panic_task::<SharedQueueThreadPool>()
-// }
+#[test]
+fn shared_queue_thread_pool_panic_task() -> Result<()> {
+    spawn_panic_task::<SharedQueueThreadPool>()
+}

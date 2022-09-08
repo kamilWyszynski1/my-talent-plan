@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use kvs::{KvStore, KvsEngine, Result, SledKvsEngine};
+use criterion::{criterion_group, criterion_main, Criterion};
+use kvs::{KvStore, KvsEngine, SledKvsEngine};
 use tempfile::TempDir;
 
 fn criterion_benchmark(c: &mut Criterion) {
@@ -15,7 +15,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     temp_dir,
                 )
             },
-            |(mut store, _temp_dir)| {
+            |(store, _temp_dir)| {
                 for i in 1..(1 << 12) {
                     store.set(format!("key{}", i), "value".to_string()).unwrap();
                 }
@@ -31,7 +31,7 @@ fn criterion_benchmark(c: &mut Criterion) {
                     TempDir::new().expect("unable to create temporary working directory");
                 (SledKvsEngine::new(&temp_dir).unwrap(), temp_dir)
             },
-            |(mut store, _temp_dir)| {
+            |(store, _temp_dir)| {
                 for i in 1..(1 << 12) {
                     store.set(format!("key{}", i), "value".to_string()).unwrap();
                 }
