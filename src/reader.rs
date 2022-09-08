@@ -1,10 +1,13 @@
 use crate::Result;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 
+#[derive(Debug)]
 pub struct BufReaderWithPos<R: Read + Seek> {
     pub reader: BufReader<R>,
     pub pos: u64,
 }
+
+unsafe impl<R: Read + Seek> Send for BufReaderWithPos<R> {}
 
 impl<R: Read + Seek> BufReaderWithPos<R> {
     pub fn new(mut r: R, pos: u64) -> Result<Self> {
@@ -48,6 +51,8 @@ impl<W: Write + Seek> BufWriterWithPos<W> {
         })
     }
 }
+
+unsafe impl<W: Write + Seek> Send for BufWriterWithPos<W> {}
 
 impl<W: Write + Seek> Write for BufWriterWithPos<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {

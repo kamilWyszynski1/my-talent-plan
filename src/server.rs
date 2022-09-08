@@ -78,7 +78,7 @@ impl ServerCLI {
     /// Starts server with KvStore as an engine.
     fn run_kvs(&self) -> Result<()> {
         let engine = KvStore::open("kv")?;
-        let mut server = Server::new(self.addr, self.engine, engine);
+        let mut server = KvServer::new(self.addr, self.engine, engine);
         server.run()?;
         Ok(())
     }
@@ -86,20 +86,20 @@ impl ServerCLI {
     /// Starts server with SledKvsEngine as an engine.
     fn run_sled(&self) -> Result<()> {
         let engine = SledKvsEngine::new("sled")?;
-        let mut server = Server::new(self.addr, self.engine, engine);
+        let mut server = KvServer::new(self.addr, self.engine, engine);
         server.run()?;
         Ok(())
     }
 }
 
 /// Simple single-threader tcp server.
-struct Server<E: KvsEngine> {
+struct KvServer<E: KvsEngine> {
     ip: SocketAddrV4,
     engine_type: EngineType,
     engine: E,
 }
 
-impl<E: KvsEngine> Server<E> {
+impl<E: KvsEngine> KvServer<E> {
     fn new(ip: SocketAddrV4, engine_type: EngineType, engine: E) -> Self {
         Self {
             ip,
