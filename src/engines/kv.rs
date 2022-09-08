@@ -8,7 +8,7 @@ use serde_json::Deserializer;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::{collections::HashMap, path::PathBuf};
 
 /// Compaction process will be started after reaching this many entries.
@@ -34,17 +34,17 @@ struct CommandPos {
 pub struct KvStore {
     path: PathBuf,
     /// Holds [generation:reader] data.
-    readers: Arc<Mutex<HashMap<u64, BufReaderWithPos<File>>>>,
-    writer: Arc<Mutex<BufWriterWithPos<File>>>,
+    readers: Arc<RwLock<HashMap<u64, BufReaderWithPos<File>>>>,
+    writer: Arc<RwLock<BufWriterWithPos<File>>>,
 
     /// Key is mapped to CommandPos.
-    index: Arc<Mutex<BTreeMap<String, CommandPos>>>,
+    index: Arc<RwLock<BTreeMap<String, CommandPos>>>,
 
     /// Current generation.
-    current_gen: Arc<Mutex<u64>>,
+    current_gen: Arc<RwLock<u64>>,
 
     /// Tracks amount of already written data to latest generation file.
-    uncompacted: Arc<Mutex<u64>>,
+    uncompacted: Arc<RwLock<u64>>,
     // Thread pool responsible for multi-threaded functionalities.
     // thread_pool: TP,
 }
@@ -89,8 +89,8 @@ impl KvStore {
 
         let mut s = Self {
             path: path.clone(),
-            readers: Arc::new(Mutex::new(readers)),
-            writer: Arc::new(Mutex::new(BufWriterWithPos::new(
+            readers: Arc::new(RwLock::new(readers)),
+            writer: Arc::new(RwLock::new(BufWriterWithPos::new(
                 OpenOptions::new()
                     .create(true)
                     .write(true)
@@ -98,7 +98,7 @@ impl KvStore {
                     .open(path.join(format!("{}.log", generation)))?,
             )?)),
             index: Arc::default(),
-            current_gen: Arc::new(Mutex::new(generation)),
+            current_gen: Arc::new(RwLock::new(generation)),
             uncompacted: Arc::default(), // will be set in read_generation_data method.
         };
 
@@ -107,8 +107,8 @@ impl KvStore {
 
         debug!(
             "current generation: {}, last_generation_size: {:?}",
-            s.current_gen.try_lock().unwrap(),
-            s.uncompacted.try_lock().unwrap()
+            s.current_gen.try_read().unwrap(),
+            s.uncompacted.try_read().unwrap()
         );
 
         Ok(s)
@@ -119,7 +119,7 @@ impl KvStore {
         // size of latest generation.
         let mut size = 0;
 
-        for gen in self.readers.clone().lock().unwrap().keys().sorted() {
+        for gen in self.readers.clone().read().unwrap().keys().sorted() {
             let mut reader = BufReader::new(File::open(self.gen_path(*gen))?);
             let mut pos = reader.seek(SeekFrom::Start(0))?;
             let mut stream = Deserializer::from_reader(reader).into_iter::<Command>();
@@ -131,11 +131,11 @@ impl KvStore {
 
                 match cmd? {
                     Command::Set { key, .. } => {
-                        if *gen == self.current_gen.lock().unwrap().to_owned() {
+                        if *gen == self.current_gen.read().unwrap().to_owned() {
                             size += 1
                         }
 
-                        self.index.lock().unwrap().insert(
+                        self.index.write().unwrap().insert(
                             key,
                             CommandPos {
                                 pos,
@@ -146,7 +146,7 @@ impl KvStore {
                     }
                     Command::Rm { key } => {
                         self.index
-                            .lock()
+                            .write()
                             .unwrap()
                             .remove(&key)
                             .ok_or(KvsError::KeyNotFound)?;
@@ -155,7 +155,7 @@ impl KvStore {
                 pos = new_pos;
             }
         }
-        *self.uncompacted.lock().unwrap() = size;
+        *self.uncompacted.write().unwrap() = size;
         Ok(())
     }
 
@@ -166,18 +166,18 @@ impl KvStore {
     /// Takes values from latest generation and writes compacted version of it to another file.
     fn compact(&self) -> Result<()> {
         // increase current gen by 2. current_gen + 1 is for the compaction file.
-        let compaction_gen = self.current_gen.lock().unwrap().to_owned() + 1;
-        *self.current_gen.lock().unwrap() += 2;
+        let compaction_gen = self.current_gen.read().unwrap().to_owned() + 1;
+        *self.current_gen.write().unwrap() += 2;
 
-        *self.writer.lock().unwrap() =
-            self.new_log_file(self.current_gen.lock().unwrap().to_owned())?;
+        *self.writer.write().unwrap() =
+            self.new_log_file(self.current_gen.read().unwrap().to_owned())?;
 
         let mut compaction_writer = self.new_log_file(compaction_gen)?;
 
         let mut new_pos = 0; // pos in the new log file.
 
-        for cmd_pos in self.index.lock().unwrap().values_mut() {
-            let mut readers = self.readers.lock().unwrap();
+        for cmd_pos in self.index.write().unwrap().values_mut() {
+            let mut readers = self.readers.write().unwrap();
             let reader = readers
                 .get_mut(&cmd_pos.gen)
                 .expect("Cannot find log reader");
@@ -201,17 +201,17 @@ impl KvStore {
         let stale_gens: Vec<_> = self
             .readers
             .clone()
-            .lock()
+            .read()
             .unwrap()
             .keys()
             .filter(|&&gen| gen < compaction_gen)
             .cloned()
             .collect();
         for stale_gen in stale_gens {
-            self.readers.lock().unwrap().remove(&stale_gen);
+            self.readers.write().unwrap().remove(&stale_gen);
             fs::remove_file(self.gen_path(stale_gen))?;
         }
-        *self.uncompacted.lock().unwrap() = 0;
+        *self.uncompacted.write().unwrap() = 0;
 
         Ok(())
     }
@@ -226,7 +226,7 @@ impl KvStore {
                 .open(&path)?,
         )?;
         self.readers
-            .lock()
+            .write()
             .unwrap()
             .insert(gen, BufReaderWithPos::new(File::open(path)?, 0)?);
         Ok(writer)
@@ -235,12 +235,12 @@ impl KvStore {
 
 impl KvsEngine for KvStore {
     fn set(&self, key: String, value: String) -> Result<()> {
-        if self.uncompacted.lock().unwrap().ge(&CAPACITY) {
+        if self.uncompacted.read().unwrap().ge(&CAPACITY) {
             self.compact()?;
         }
 
-        let mut writer = self.writer.lock().unwrap();
-        let mut index = self.index.lock().unwrap();
+        let mut writer = self.writer.write().unwrap();
+        let mut index = self.index.write().unwrap();
         let pos = writer.pos;
 
         write!(
@@ -256,20 +256,20 @@ impl KvsEngine for KvStore {
         index.insert(
             key,
             CommandPos {
-                gen: self.current_gen.lock().unwrap().to_owned(),
+                gen: self.current_gen.read().unwrap().to_owned(),
                 pos,
                 len: writer.pos - pos,
             },
         );
 
-        *self.uncompacted.lock().unwrap() += 1;
+        *self.uncompacted.write().unwrap() += 1;
         Ok(())
     }
 
     fn get(&self, key: String) -> Result<Option<String>> {
-        match self.index.clone().lock().unwrap().get(&key) {
+        match self.index.clone().read().unwrap().get(&key) {
             Some(cmd_pos) => {
-                let mut readers = self.readers.lock().unwrap();
+                let mut readers = self.readers.write().unwrap();
                 let reader = readers
                     .get_mut(&cmd_pos.gen)
                     .expect("Cannot find log reader");
@@ -293,11 +293,11 @@ impl KvsEngine for KvStore {
     }
 
     fn remove(&self, key: String) -> Result<()> {
-        if self.index.lock().unwrap().remove(&key).is_none() {
+        if self.index.write().unwrap().remove(&key).is_none() {
             return Err(KvsError::KeyNotFound.into());
         }
 
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self.writer.write().unwrap();
         write!(writer, "{}", serde_json::to_string(&Command::Rm { key })?)?;
         writer.flush()?;
         Ok(())
