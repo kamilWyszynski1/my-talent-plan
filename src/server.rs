@@ -1,6 +1,7 @@
 use super::error::KvsError;
 use crate::cmd::{GetResponse, SetResponse, CMD};
 use crate::engines::sled::SledKvsEngine;
+use crate::thread_pool::{NaiveThreadPool, ThreadPool};
 use crate::{KvStore, KvsEngine, Result};
 use anyhow::bail;
 use clap::Parser;
@@ -10,6 +11,7 @@ use std::fs::OpenOptions;
 use std::io::{BufReader, BufWriter, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::{fmt::Display, net::SocketAddrV4};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,7 +80,7 @@ impl ServerCLI {
     /// Starts server with KvStore as an engine.
     fn run_kvs(&self) -> Result<()> {
         let engine = KvStore::open("kv")?;
-        let mut server = KvServer::new(self.addr, self.engine, engine);
+        let mut server = KvServer::new(self.addr, self.engine, engine, NaiveThreadPool::new(0)?);
         server.run()?;
         Ok(())
     }
@@ -86,29 +88,35 @@ impl ServerCLI {
     /// Starts server with SledKvsEngine as an engine.
     fn run_sled(&self) -> Result<()> {
         let engine = SledKvsEngine::new("sled")?;
-        let mut server = KvServer::new(self.addr, self.engine, engine);
+        let mut server = KvServer::new(self.addr, self.engine, engine, NaiveThreadPool::new(0)?);
         server.run()?;
         Ok(())
     }
 }
 
 /// Simple single-threader tcp server.
-struct KvServer<E: KvsEngine> {
+struct KvServer<E: KvsEngine, TP: ThreadPool> {
     ip: SocketAddrV4,
     engine_type: EngineType,
-    engine: E,
+    engine: Arc<Mutex<E>>,
+    thread_pool: TP,
 }
 
-impl<E: KvsEngine> KvServer<E> {
-    fn new(ip: SocketAddrV4, engine_type: EngineType, engine: E) -> Self {
+impl<E, TP> KvServer<E, TP>
+where
+    E: KvsEngine,
+    TP: ThreadPool,
+{
+    fn new(ip: SocketAddrV4, engine_type: EngineType, engine: E, thread_pool: TP) -> Self {
         Self {
             ip,
             engine_type,
-            engine,
+            engine: Arc::new(Mutex::new(engine)),
+            thread_pool,
         }
     }
 
-    /// Checks "conf" file for determining wether server was already 
+    /// Checks "conf" file for determining wether server was already
     /// started and if so checks if EngineType matches.
     fn verify_conf(&self) -> Result<()> {
         let conf_file = OpenOptions::new()
@@ -143,64 +151,67 @@ impl<E: KvsEngine> KvServer<E> {
         for stream in listener.incoming() {
             match stream {
                 Ok(stream) => {
-                    if let Err(e) = self.serve(stream) {
-                        error!("Error on serving client: {}", e);
-                    }
+                    let engine = self.engine.clone();
+                    self.thread_pool.spawn(move || {
+                        if let Err(e) = serve(engine, stream) {
+                            error!("Error on serving client: {}", e);
+                        }
+                    })
                 }
                 Err(e) => error!("Connection failed: {}", e),
             }
         }
         Ok(())
     }
+}
 
-    fn serve(&mut self, tcp: TcpStream) -> Result<()> {
-        let peer_addr = tcp.peer_addr()?;
-        let reader = BufReader::new(&tcp);
-        let mut writer = BufWriter::new(&tcp);
-        let cmd_reader = Deserializer::from_reader(reader).into_iter::<CMD>();
+fn serve<E: KvsEngine>(engine: Arc<Mutex<E>>, tcp: TcpStream) -> Result<()> {
+    let peer_addr = tcp.peer_addr()?;
+    let reader = BufReader::new(&tcp);
+    let mut writer = BufWriter::new(&tcp);
+    let cmd_reader = Deserializer::from_reader(reader).into_iter::<CMD>();
 
-        for cmd in cmd_reader {
-            let cmd = cmd?;
+    for cmd in cmd_reader {
+        let cmd = cmd?;
 
-            debug!("Receive request from {}: {:?}", peer_addr, cmd);
+        debug!("Receive request from {}: {:?}", peer_addr, cmd);
 
-            match cmd {
-                CMD::Set { key, value } => {
-                    debug!("creating response");
+        match cmd {
+            CMD::Set { key, value } => {
+                debug!("creating response");
 
-                    let response = match self.engine.set(key, value) {
-                        Ok(_) => SetResponse::Ok(()),
-                        Err(e) => SetResponse::Err(e.to_string()),
-                    };
+                let response = match engine.lock().unwrap().set(key, value) {
+                    Ok(_) => SetResponse::Ok(()),
+                    Err(e) => SetResponse::Err(e.to_string()),
+                };
 
-                    debug!("writing response");
+                debug!("writing response");
 
-                    serde_json::to_writer(&mut writer, &response)?;
-                    writer.flush()?;
+                serde_json::to_writer(&mut writer, &response)?;
+                writer.flush()?;
 
-                    debug!("response written");
-                }
-                CMD::Get { key } => {
-                    let response = match self.engine.get(key) {
-                        Ok(v) => match v {
-                            Some(v) => GetResponse::Ok(v),
-                            None => GetResponse::Err(String::from("Key not found")),
-                        },
-                        Err(e) => GetResponse::Err(e.to_string()),
-                    };
-                    serde_json::to_writer(&mut writer, &response)?;
-                    writer.flush()?;
-                }
-                CMD::Rm { key } => {
-                    let response = match self.engine.remove(key) {
-                        Ok(_) => SetResponse::Ok(()),
-                        Err(e) => SetResponse::Err(e.to_string()),
-                    };
-                    serde_json::to_writer(&mut writer, &response)?;
-                    writer.flush()?;
-                }
-            };
-        }
-        Ok(())
+                debug!("response written");
+            }
+            CMD::Get { key } => {
+                let response = match engine.lock().unwrap().get(key) {
+                    Ok(v) => match v {
+                        Some(v) => GetResponse::Ok(v),
+                        None => GetResponse::Err(String::from("Key not found")),
+                    },
+                    Err(e) => GetResponse::Err(e.to_string()),
+                };
+                serde_json::to_writer(&mut writer, &response)?;
+                writer.flush()?;
+            }
+            CMD::Rm { key } => {
+                let response = match engine.lock().unwrap().remove(key) {
+                    Ok(_) => SetResponse::Ok(()),
+                    Err(e) => SetResponse::Err(e.to_string()),
+                };
+                serde_json::to_writer(&mut writer, &response)?;
+                writer.flush()?;
+            }
+        };
     }
+    Ok(())
 }

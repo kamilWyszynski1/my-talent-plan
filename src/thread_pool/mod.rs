@@ -4,7 +4,7 @@ use crate::Result;
 
 pub use naive::NaiveThreadPool;
 
-pub trait ThreadPool {
+pub trait ThreadPool: Send {
     fn new(threads: usize) -> Result<Self>
     where
         Self: Sized;

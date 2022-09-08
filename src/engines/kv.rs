@@ -239,8 +239,10 @@ impl KvsEngine for KvStore {
             self.compact()?;
         }
 
-        let pos = self.writer.clone().lock().unwrap().pos;
         let mut writer = self.writer.lock().unwrap();
+        let mut index = self.index.lock().unwrap();
+        let pos = writer.pos;
+
         write!(
             writer,
             "{}",
@@ -251,7 +253,7 @@ impl KvsEngine for KvStore {
         )?;
         writer.flush()?;
 
-        self.index.lock().unwrap().insert(
+        index.insert(
             key,
             CommandPos {
                 gen: self.current_gen.lock().unwrap().to_owned(),
@@ -273,8 +275,14 @@ impl KvsEngine for KvStore {
                     .expect("Cannot find log reader");
 
                 reader.seek(SeekFrom::Start(cmd_pos.pos))?;
+                let mut content = String::new();
+                reader.take(cmd_pos.len).read_to_string(&mut content)?;
+
                 if let Command::Set { value, .. } =
-                    serde_json::from_reader(reader.take(cmd_pos.len))?
+                    serde_json::from_str(&content).context(format!(
+                        "could not decode from reader, content: {} cmd_pos: {:?}",
+                        &content, cmd_pos,
+                    ))?
                 {
                     return Ok(Some(value));
                 }
